@@ -243,10 +243,13 @@ def stats():
             "open_by_severity": _sev_counts(c, "1=1", ()),
             "top_vulns": db.rows(c.execute(f"""SELECT v.id, v.aliases, v.severity, v.summary,
                   COUNT(DISTINCT k.component_id) components,
-                  COUNT(DISTINCT pc.product_id) products
+                  COUNT(DISTINCT COALESCE(pc.product_id, sp.product_id)) products
                 FROM findings f JOIN vulns v ON v.id=f.vuln_id
                 LEFT JOIN packages k ON k.id=f.package_id
                 LEFT JOIN product_components pc ON pc.component_id=k.component_id
+                LEFT JOIN (SELECT system_id, product_id FROM product_systems
+                           UNION SELECT cs.system_id, pc2.product_id FROM component_systems cs
+                                 JOIN product_components pc2 ON pc2.component_id=cs.component_id) sp ON sp.system_id=f.system_id
                 WHERE f.status IN {OPEN}
                 GROUP BY v.id ORDER BY CASE v.severity WHEN 'critica' THEN 0 WHEN 'alta' THEN 1 WHEN 'media' THEN 2 WHEN 'baixa' THEN 3 ELSE 4 END,
                   products DESC LIMIT 10""")),
