@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventário de Ecossistema · PSIRT</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">◆ Inventário <span>PSIRT</span></div>
+  <form class="quick" id="quick"><input name="q" placeholder="CVE, pacote (log4j-core@2.14.1), purl ou ferramenta…" autocomplete="off"><button>Onde somos afetados?</button></form>
+</header>
+<nav class="side" id="nav">
+  <a href="#/">Painel</a>
+  <a href="#/impacto">Busca de impacto</a>
+  <a href="#/vulns">Vulnerabilidades</a>
+  <hr>
+  <a href="#/products">Produtos</a>
+  <a href="#/components">Componentes</a>
+  <a href="#/systems">Ferramentas e sistemas</a>
+  <a href="#/teams">Equipes</a>
+  <hr>
+  <a href="#/dados">Importar / Exportar</a>
+</nav>
+<main id="main"></main>
+<dialog id="dlg"><form method="dialog" id="dlgform"></form></dialog>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

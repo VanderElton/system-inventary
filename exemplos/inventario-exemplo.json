@@ -1,0 +1,34 @@
+{
+  "teams": [
+    {"name": "Squad Pagamentos", "email": "pagamentos@empresa.example", "chat": "#squad-pagamentos", "manager": "Ana Souza"},
+    {"name": "Squad Portal", "email": "portal@empresa.example", "chat": "#squad-portal", "manager": "Bruno Lima"},
+    {"name": "Squad IoT", "email": "iot@empresa.example", "chat": "#squad-iot", "manager": "Carla Dias"},
+    {"name": "Plataforma / DevOps", "email": "plataforma@empresa.example", "chat": "#plataforma", "manager": "Diego Alves"},
+    {"name": "PSIRT", "email": "psirt@empresa.example", "chat": "#psirt", "manager": "Elisa Rocha"}
+  ],
+  "systems": [
+    {"name": "GitHub Enterprise", "category": "scm", "vendor": "GitHub", "url": "https://github.example", "owner_team": "Plataforma / DevOps"},
+    {"name": "Jenkins", "version": "2.440", "category": "ci_cd", "vendor": "Jenkins project", "identifier": "pkg:maven/org.jenkins-ci.main/jenkins-core@2.440", "owner_team": "Plataforma / DevOps"},
+    {"name": "Nexus Repository", "version": "3.62.0", "category": "registro_artefatos", "vendor": "Sonatype", "owner_team": "Plataforma / DevOps"},
+    {"name": "AWS EKS", "category": "cloud_infra", "vendor": "AWS", "owner_team": "Plataforma / DevOps"},
+    {"name": "SonarQube", "version": "10.3", "category": "seguranca", "vendor": "SonarSource", "owner_team": "PSIRT"},
+    {"name": "PostgreSQL", "version": "15.4", "category": "banco_dados", "vendor": "PostgreSQL", "owner_team": "Plataforma / DevOps"},
+    {"name": "Jira", "category": "comunicacao", "vendor": "Atlassian", "owner_team": "Plataforma / DevOps"}
+  ],
+  "components": [
+    {"name": "api-pagamentos", "version": "1.4.0", "type": "servico", "language": "Java 17 / Spring Boot", "repo_url": "https://github.example/pagamentos/api-pagamentos", "owner_team": "Squad Pagamentos",
+     "systems": [{"name": "GitHub Enterprise", "role": "código-fonte"}, {"name": "Jenkins", "role": "build e deploy"}, {"name": "Nexus Repository", "role": "artefatos"}, {"name": "AWS EKS", "role": "execução"}, {"name": "PostgreSQL", "role": "dados"}]},
+    {"name": "portal-web", "version": "3.2.1", "type": "frontend", "language": "TypeScript / React", "repo_url": "https://github.example/portal/portal-web", "owner_team": "Squad Portal",
+     "systems": [{"name": "GitHub Enterprise", "role": "código-fonte"}, {"name": "Jenkins", "role": "build"}, {"name": "AWS EKS", "role": "execução"}]},
+    {"name": "telemetria-ingest", "version": "0.9.0", "type": "servico", "language": "Python 3.11", "repo_url": "https://github.example/iot/telemetria-ingest", "owner_team": "Squad IoT",
+     "systems": [{"name": "GitHub Enterprise", "role": "código-fonte"}, {"name": "Jenkins", "role": "build"}, {"name": "AWS EKS", "role": "execução"}]},
+    {"name": "firmware-sensor", "version": "2.1.0", "type": "firmware", "language": "C / FreeRTOS", "owner_team": "Squad IoT",
+     "systems": [{"name": "GitHub Enterprise", "role": "código-fonte"}]}
+  ],
+  "products": [
+    {"name": "Portal do Cliente", "version": "2026.10", "description": "Portal web e APIs de pagamento para clientes finais.", "owner_team": "Squad Portal", "criticality": "critica", "lifecycle": "ativo",
+     "components": ["api-pagamentos", "portal-web"], "systems": [{"name": "SonarQube", "role": "análise estática"}, {"name": "Jira", "role": "gestão"}]},
+    {"name": "Gateway IoT", "version": "2.x", "description": "Dispositivo de campo e serviço de ingestão de telemetria.", "owner_team": "Squad IoT", "criticality": "alta", "lifecycle": "ativo",
+     "components": ["telemetria-ingest", "firmware-sensor"], "systems": [{"name": "Jira", "role": "gestão"}]}
+  ]
+}
