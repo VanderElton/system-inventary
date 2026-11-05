@@ -211,5 +211,22 @@ def package_matches(pkg, affected):
     if eco and a_eco and eco != a_eco.split(":")[0]:
         return False
     name = (pkg.get("name") or "").lower()
-    # Maven no OSV usa "grupo:artefato"; no inventário guardamos só o artefato (vindo do purl)
+    # Maven no OSV usa "grupo:artefato"; no inventário o nome é só o artefato. Se o purl tiver
+    # namespace (grupo), exige coordenadas completas para não confundir artefatos homônimos.
+    full = _purl_coordinates(pkg.get("purl"))
+    if full:
+        return full in (a_name, a_name.replace(":", "/"))
     return name == a_name or a_name.endswith(":" + name) or a_name.endswith("/" + name)
+
+
+def _purl_coordinates(purl):
+    """pkg:maven/org.apache/log4j-core@2.1 -> 'org.apache:log4j-core'; pkg:golang/github.com/x/y -> 'github.com/x/y'"""
+    from urllib.parse import unquote
+    if not purl or not purl.startswith("pkg:"):
+        return None
+    path = purl[4:].split("?", 1)[0].split("#", 1)[0].split("@", 1)[0]
+    ptype, _, rest = path.partition("/")
+    if "/" not in rest:
+        return None
+    rest = unquote(rest).lower()
+    return rest.replace("/", ":", 1) if ptype.lower() == "maven" else rest

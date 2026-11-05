@@ -25,6 +25,11 @@ ENTITIES = {
     "systems": ["name", "category", "vendor", "version", "identifier", "url", "owner_team_id", "notes"],
 }
 OPEN = "('em_analise','afetado')"
+# Sistemas de um produto: vínculo direto ou via seus componentes
+PRODUCT_SYSTEM_IDS = """SELECT system_id FROM product_systems WHERE product_id={p}
+    UNION SELECT cs.system_id FROM component_systems cs JOIN product_components pc ON pc.component_id=cs.component_id
+          WHERE pc.product_id={p}"""
+
 
 
 @app.exception_handler(ValueError)
@@ -57,9 +62,10 @@ LIST_SQL = {
         SELECT p.*, t.name AS team,
           (SELECT COUNT(*) FROM product_components WHERE product_id=p.id) AS components,
           (SELECT COUNT(*) FROM product_systems WHERE product_id=p.id) AS systems,
-          (SELECT COUNT(DISTINCT f.vuln_id) FROM findings f JOIN packages k ON k.id=f.package_id
-             JOIN product_components pc ON pc.component_id=k.component_id
-             WHERE pc.product_id=p.id AND f.status IN {OPEN}) AS open_vulns
+          (SELECT COUNT(DISTINCT f.vuln_id) FROM findings f WHERE f.status IN {OPEN} AND (
+             f.package_id IN (SELECT k.id FROM packages k JOIN product_components pc ON pc.component_id=k.component_id
+                              WHERE pc.product_id=p.id)
+             OR f.system_id IN ({PRODUCT_SYSTEM_IDS.format(p="p.id")}))) AS open_vulns
         FROM products p LEFT JOIN teams t ON t.id=p.owner_team_id ORDER BY p.name, p.version""",
     "components": f"""
         SELECT c.*, t.name AS team,
@@ -264,7 +270,7 @@ def impact(q: str):
                    COALESCE(tc.name, ts.name) team, COALESCE(tc.email, ts.email) team_email,
                    COALESCE(
                      (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM product_components pc JOIN products p ON p.id=pc.product_id WHERE pc.component_id=c.id),
-                     (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM product_systems ps JOIN products p ON p.id=ps.product_id WHERE ps.system_id=s.id)) products
+                     (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM products p WHERE p.id IN (SELECT product_id FROM product_systems WHERE system_id=s.id UNION SELECT pc.product_id FROM component_systems cs JOIN product_components pc ON pc.component_id=cs.component_id WHERE cs.system_id=s.id))) products
             FROM vulns v JOIN findings f ON f.vuln_id=v.id
             LEFT JOIN packages k ON k.id=f.package_id LEFT JOIN components c ON c.id=k.component_id
             LEFT JOIN teams tc ON tc.id=c.owner_team_id
@@ -281,7 +287,7 @@ def impact(q: str):
             ORDER BY k.name, k.version, c.name LIMIT 500""", {"n": like, "v": version}))
         by_system = db.rows(c.execute("""
             SELECT s.id system_id, s.name system, s.version, s.category, t.name team, t.email team_email,
-                   (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM product_systems ps JOIN products p ON p.id=ps.product_id WHERE ps.system_id=s.id) products,
+                   (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM products p WHERE p.id IN (SELECT product_id FROM product_systems WHERE system_id=s.id UNION SELECT pc.product_id FROM component_systems cs JOIN product_components pc ON pc.component_id=cs.component_id WHERE cs.system_id=s.id)) products,
                    (SELECT GROUP_CONCAT(c.name, ', ') FROM component_systems cs JOIN components c ON c.id=cs.component_id WHERE cs.system_id=s.id) components
             FROM systems s LEFT JOIN teams t ON t.id=s.owner_team_id
             WHERE s.name LIKE :n OR s.vendor LIKE :n OR s.identifier LIKE :n ORDER BY s.name""", {"n": like}))
@@ -365,10 +371,10 @@ def import_sbom(component_id, doc, filename=None):
     with db.tx() as c:
         if not c.execute("SELECT 1 FROM components WHERE id=?", (component_id,)).fetchone():
             raise HTTPException(404, "Componente não encontrado")
-        # preserva a triagem existente (status/notas) para o mesmo pacote+versão+vuln
+        # preserva a triagem existente (status/notas) para o mesmo pacote (nome+versão+purl) e vuln
         # (achados vindos do OSV/scanner também são mantidos se o pacote+versão continuar no novo SBOM)
         keep = [dict(r) for r in c.execute(
-            """SELECT f.vuln_id, k.name, k.version, f.status, f.notes, f.fixed_version, f.source FROM findings f
+            """SELECT f.vuln_id, k.name, k.version, k.purl, f.status, f.notes, f.fixed_version, f.source FROM findings f
                JOIN packages k ON k.id=f.package_id WHERE k.component_id=?""", (component_id,))]
         c.execute("DELETE FROM sboms WHERE component_id=?", (component_id,))
         sid = c.execute("INSERT INTO sboms (component_id, format, spec_version, filename, package_count) VALUES (?,?,?,?,?)",
@@ -381,7 +387,7 @@ def import_sbom(component_id, doc, filename=None):
                             (sid, component_id, p["name"], p.get("version"), p.get("purl"), p.get("ecosystem"), p.get("license"))).lastrowid
             if p.get("ref"):
                 refs[p["ref"]] = pid
-            by_nv.setdefault((p["name"], p.get("version")), pid)
+            by_nv.setdefault((p["name"], p.get("version"), p.get("purl")), pid)
             n_pkgs += 1
         n_vulns = 0
         for v in parsed["vulnerabilities"]:
@@ -397,7 +403,7 @@ def import_sbom(component_id, doc, filename=None):
                     _add_finding(c, v["id"], package_id=refs[ref], source="sbom", status=status)
                     n_vulns += 1
         for k in keep:
-            pid = by_nv.get((k["name"], k["version"]))
+            pid = by_nv.get((k["name"], k["version"], k["purl"]))
             if not pid:
                 continue  # pacote saiu do SBOM (ex.: atualizado): o achado antigo deixa de valer
             c.execute("""INSERT INTO findings (vuln_id, package_id, fixed_version, status, notes, source)
@@ -511,7 +517,7 @@ def findings(status: str = None, severity: str = None, product_id: int = None, c
                COALESCE(tc.name, ts.name) team,
                COALESCE(
                  (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM product_components pc JOIN products p ON p.id=pc.product_id WHERE pc.component_id=c.id),
-                 (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM product_systems ps JOIN products p ON p.id=ps.product_id WHERE ps.system_id=s.id)) products
+                 (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM products p WHERE p.id IN (SELECT product_id FROM product_systems WHERE system_id=s.id UNION SELECT pc.product_id FROM component_systems cs JOIN product_components pc ON pc.component_id=cs.component_id WHERE cs.system_id=s.id))) products
              FROM findings f JOIN vulns v ON v.id=f.vuln_id
              LEFT JOIN packages k ON k.id=f.package_id LEFT JOIN components c ON c.id=k.component_id
              LEFT JOIN teams tc ON tc.id=c.owner_team_id
@@ -528,7 +534,8 @@ def findings(status: str = None, severity: str = None, product_id: int = None, c
     if system_id:
         sql += " AND s.id=?"; args.append(system_id)
     if product_id:
-        sql += " AND c.id IN (SELECT component_id FROM product_components WHERE product_id=?)"; args.append(product_id)
+        sql += f""" AND (c.id IN (SELECT component_id FROM product_components WHERE product_id=?)
+                     OR s.id IN ({PRODUCT_SYSTEM_IDS.format(p='?')}))"""; args += [product_id] * 3
     sql += """ ORDER BY CASE v.severity WHEN 'critica' THEN 0 WHEN 'alta' THEN 1 WHEN 'media' THEN 2 WHEN 'baixa' THEN 3 ELSE 4 END,
                f.vuln_id LIMIT 2000"""
     with db.tx() as c:

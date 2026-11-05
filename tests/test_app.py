@@ -126,3 +126,47 @@ def test_scan_with_mocked_osv(seeded, monkeypatch):
 def test_invalid_upload(seeded):
     r = seeded.post("/api/components/1/sbom", files={"file": ("x.json", io.BytesIO(b"not json"))})
     assert r.status_code == 400
+
+
+def test_maven_group_must_match():
+    a = {"package": {"ecosystem": "Maven", "name": "org.example:widget"}}
+    same = {"name": "widget", "ecosystem": "Maven", "purl": "pkg:maven/org.example/widget@1.0"}
+    other = {"name": "widget", "ecosystem": "Maven", "purl": "pkg:maven/com.other/widget@1.0"}
+    assert vulns.package_matches(same, a)
+    assert not vulns.package_matches(other, a)
+    scoped = {"name": "core", "ecosystem": "npm", "purl": "pkg:npm/%40babel/core@7.0.0"}
+    assert vulns.package_matches(scoped, {"package": {"ecosystem": "npm", "name": "@babel/core"}})
+    assert not vulns.package_matches(scoped, {"package": {"ecosystem": "npm", "name": "core"}})
+
+
+def test_triage_not_copied_to_homonymous_package(client):
+    c = client.post("/api/e/components", json={"name": "svc"}).json()["id"]
+    bom = lambda group: {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [
+        {"bom-ref": "w", "name": "widget", "version": "1.0", "purl": f"pkg:maven/{group}/widget@1.0"}]}
+    up = lambda d: client.post(f"/api/components/{c}/sbom", files={"file": ("b.json", io.BytesIO(json.dumps(d).encode()))})
+    up(bom("org.example"))
+    from app import db as dbm
+    with dbm.tx() as cx:
+        cx.execute("INSERT INTO vulns (id, severity) VALUES ('GHSA-x', 'alta')")
+        cx.execute("INSERT INTO findings (vuln_id, package_id, status) SELECT 'GHSA-x', id, 'nao_afetado' FROM packages")
+    up(bom("com.other"))
+    assert client.get("/api/findings").json() == []
+
+
+def test_system_findings_reach_products(client, monkeypatch):
+    p = client.post("/api/e/products", json={"name": "Prod"}).json()["id"]
+    c = client.post("/api/e/components", json={"name": "svc"}).json()["id"]
+    s = client.post("/api/e/systems", json={"name": "Jenkins", "version": "2.440",
+                                            "identifier": "pkg:maven/org.jenkins-ci.main/jenkins-core@2.440"}).json()["id"]
+    client.post(f"/api/e/products/{p}/links/components", json={"id": c})
+    client.post(f"/api/e/components/{c}/links/systems", json={"id": s, "role": "build"})  # só via componente
+
+    def fake_post(url, payload, timeout=60):
+        return {"results": [{"vulns": [{"id": "GHSA-jenkins"}]} for _ in payload["queries"]]}
+    get = lambda url, timeout=30: {"id": "GHSA-jenkins", "aliases": ["CVE-2024-23897"], "database_specific": {"severity": "CRITICAL"}}
+    monkeypatch.setattr(vulns.osv_lookup, "__defaults__", (fake_post, get))
+    assert client.post("/api/scan").json()["findings"] == 1
+    assert [f["system"] for f in client.get("/api/findings", params={"product_id": p}).json()] == ["Jenkins"]
+    assert client.get("/api/e/products").json()[0]["open_vulns"] == 1
+    hit = client.get("/api/impact", params={"q": "CVE-2024-23897"}).json()["vulns"][0]
+    assert hit["products"] == "Prod"
