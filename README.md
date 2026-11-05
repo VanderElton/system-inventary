@@ -12,24 +12,32 @@ componente e cruzar com vulnerabilidades, para responder rápido à pergunta do 
 
 ```
 Equipe ──dona de──▶ Produto ◀──N:N──▶ Componente ──1:N──▶ SBOM ──1:N──▶ Pacote ──▶ Achado ◀── Vulnerabilidade
-   │                  │                   │                                          ▲
-   └──dona de──▶ Ferramenta/Sistema ◀─────┴── (papel: código-fonte, build, deploy...) │
+   │                  │  │                │  │                                       ▲
+   │                  │  └──▶ Plataforma ◀┘  └── (papel: código-fonte, build, deploy...) │
+   │                  │       (runtime, framework, SO, RTOS, imagem base;              │
+   │                  │        fim de suporte + estratégia de atualização)             │
+   └──dona de──▶ Ferramenta/Sistema ──▶ Plataforma                                     │
                        └──────────── identificador purl/CPE ──────────────────────────┘
 ```
 
 | Entidade | O que guarda |
 |---|---|
 | `teams` | Equipe, e-mail, canal de chat, gestor |
-| `products` | Produto/linha, versão, criticidade, ciclo de vida, equipe dona |
+| `products` | Produto/linha, versão, criticidade, ciclo de vida, equipe dona, **mecanismo de atualização** (SaaS, container, OTA, loja de apps, instalado pelo cliente…) |
 | `components` | Serviço, frontend, app, firmware, biblioteca, imagem… (pode ser compartilhado entre produtos) |
 | `systems` | Ferramentas do ecossistema: SCM, CI/CD, registries, cloud, bancos, scanners… com purl/CPE opcional |
-| `product_components`, `product_systems`, `component_systems` | Relacionamentos, com o **papel** da ferramenta (build, deploy, execução…) |
+| `platforms` | Plataforma de desenvolvimento/execução (Java 17, Spring Boot 2.7, Node.js 18, FreeRTOS, Ubuntu 22.04…): tipo, **fim de suporte (EOL)** e **estratégia de atualização** |
+| `product_components`, `product_systems`, `component_systems`, `*_platforms` | Relacionamentos, com o **papel** (build, deploy, execução, runtime, framework…) |
 | `sboms`, `packages` | SBOM atual de cada componente e seus pacotes (nome, versão, purl, ecossistema, licença) |
 | `vulns`, `findings` | Vulnerabilidades e achados por pacote/ferramenta, com **triagem estilo VEX** (em análise, afetado, não afetado, corrigido) |
 
 ## Funcionalidades
 
 - Cadastro de produtos, componentes, ferramentas/sistemas e equipes, com **mapa visual do ecossistema** por produto.
+- **Plataformas e estratégia de atualização:** cada produto, componente ou ferramenta é ligado às plataformas sobre as quais
+  é construído, e cada um registra como as correções chegam ao cliente (deploy contínuo, nova imagem, OTA, loja de apps,
+  pacote instalado pelo cliente…). O painel destaca plataformas fora de suporte ou vencendo e quantos produtos dependem delas;
+  a busca de impacto também encontra plataformas (`Spring Boot@2.7`, `Node.js`).
 - **Importação de SBOM** CycloneDX JSON e SPDX JSON por componente (upload na tela ou via API no pipeline).
   Vulnerabilidades/VEX embutidas no CycloneDX também são importadas.
 - **Cruzamento com o [OSV.dev](https://osv.dev)** (gratuito, sem chave): verifica todos os pacotes dos SBOMs e as ferramentas com purl.

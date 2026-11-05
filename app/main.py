@@ -20,11 +20,20 @@ STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 ENTITIES = {
     "teams": ["name", "email", "chat", "manager", "notes"],
-    "products": ["name", "version", "description", "owner_team_id", "criticality", "lifecycle"],
-    "components": ["name", "version", "type", "language", "repo_url", "owner_team_id", "notes"],
-    "systems": ["name", "category", "vendor", "version", "identifier", "url", "owner_team_id", "notes"],
+    "products": ["name", "version", "description", "owner_team_id", "criticality", "lifecycle", "update_mechanism"],
+    "components": ["name", "version", "type", "language", "repo_url", "owner_team_id", "notes", "update_mechanism"],
+    "systems": ["name", "category", "vendor", "version", "identifier", "url", "owner_team_id", "notes", "update_mechanism"],
+    "platforms": ["name", "version", "kind", "vendor", "eol_date", "update_strategy", "identifier", "owner_team_id", "notes"],
 }
 OPEN = "('em_analise','afetado')"
+# Plataformas de um produto: vínculo direto ou via seus componentes
+PRODUCT_PLATFORM_IDS = """SELECT platform_id FROM product_platforms WHERE product_id={p}
+    UNION SELECT cp.platform_id FROM component_platforms cp JOIN product_components pc ON pc.component_id=cp.component_id
+          WHERE pc.product_id={p}"""
+# Produtos que usam uma plataforma: vínculo direto ou via componentes
+PLATFORM_PRODUCT_IDS = """SELECT product_id FROM product_platforms WHERE platform_id={f}
+    UNION SELECT pc.product_id FROM component_platforms cp JOIN product_components pc ON pc.component_id=cp.component_id
+          WHERE cp.platform_id={f}"""
 # Sistemas de um produto: vínculo direto ou via seus componentes
 PRODUCT_SYSTEM_IDS = """SELECT system_id FROM product_systems WHERE product_id={p}
     UNION SELECT cs.system_id FROM component_systems cs JOIN product_components pc ON pc.component_id=cs.component_id
@@ -82,6 +91,14 @@ LIST_SQL = {
           (SELECT COUNT(*) FROM component_systems WHERE system_id=s.id) AS components,
           (SELECT COUNT(*) FROM findings f WHERE f.system_id=s.id AND f.status IN {OPEN}) AS open_vulns
         FROM systems s LEFT JOIN teams t ON t.id=s.owner_team_id ORDER BY s.category, s.name""",
+    "platforms": f"""
+        SELECT f.*, t.name AS team,
+          (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM products p
+             WHERE p.id IN ({PLATFORM_PRODUCT_IDS.format(f="f.id")})) AS products,
+          (SELECT COUNT(*) FROM component_platforms WHERE platform_id=f.id) AS components,
+          (SELECT COUNT(*) FROM system_platforms WHERE platform_id=f.id) AS systems
+        FROM platforms f LEFT JOIN teams t ON t.id=f.owner_team_id
+        ORDER BY f.eol_date IS NULL, f.eol_date, f.name, f.version""",
 }
 
 
@@ -136,6 +153,9 @@ LINKS = {
     ("products", "components"): ("product_components", "product_id", "component_id", False),
     ("products", "systems"): ("product_systems", "product_id", "system_id", True),
     ("components", "systems"): ("component_systems", "component_id", "system_id", True),
+    ("products", "platforms"): ("product_platforms", "product_id", "platform_id", True),
+    ("components", "platforms"): ("component_platforms", "component_id", "platform_id", True),
+    ("systems", "platforms"): ("system_platforms", "system_id", "platform_id", True),
 }
 
 
@@ -185,6 +205,7 @@ def product_ecosystem(pid: int):
             comp["vulns"] = _sev_counts(c, "k.component_id=?", (comp["id"],))
             comp["systems"] = db.rows(c.execute("""SELECT s.id, s.name, s.category, cs.role FROM component_systems cs
                 JOIN systems s ON s.id=cs.system_id WHERE cs.component_id=? ORDER BY s.name""", (comp["id"],)))
+            comp["platforms"] = _platforms_of(c, "component", comp["id"])
         systems = db.rows(c.execute("""SELECT s.*, ps.role, t.name team FROM product_systems ps JOIN systems s ON s.id=ps.system_id
             LEFT JOIN teams t ON t.id=s.owner_team_id WHERE ps.product_id=? ORDER BY s.category, s.name""", (pid,)))
         teams = db.rows(c.execute("""SELECT DISTINCT t.* FROM teams t WHERE t.id IN (
@@ -193,7 +214,20 @@ def product_ecosystem(pid: int):
               UNION SELECT s.owner_team_id FROM systems s JOIN product_systems ps ON ps.system_id=s.id WHERE ps.product_id=:p
               UNION SELECT s.owner_team_id FROM systems s JOIN component_systems cs ON cs.system_id=s.id
                     JOIN product_components pc ON pc.component_id=cs.component_id WHERE pc.product_id=:p) ORDER BY t.name""", {"p": pid}))
-        return {"product": dict(p), "components": comps, "systems": systems, "teams": teams}
+        platforms = _platforms_of(c, "product", pid)
+        return {"product": dict(p), "components": comps, "systems": systems, "platforms": platforms, "teams": teams}
+
+
+PLATFORM_LINK = {"product": ("product_platforms", "product_id"), "component": ("component_platforms", "component_id"),
+                 "system": ("system_platforms", "system_id")}
+
+
+def _platforms_of(c, kind, ident):
+    """Plataformas vinculadas diretamente a um produto/componente/sistema."""
+    table, col = PLATFORM_LINK[kind]
+    return db.rows(c.execute(f"""SELECT f.id, f.name, f.version, f.kind, f.vendor, f.eol_date, f.update_strategy, x.role,
+            t.name team FROM {table} x JOIN platforms f ON f.id=x.platform_id LEFT JOIN teams t ON t.id=f.owner_team_id
+        WHERE x.{col}=? ORDER BY f.kind, f.name""", (ident,)))
 
 
 @app.get("/api/ecosystem/component/{cid}")
@@ -206,6 +240,7 @@ def component_detail(cid: int):
             "component": dict(comp),
             "products": db.rows(c.execute("SELECT p.id, p.name, p.version FROM product_components pc JOIN products p ON p.id=pc.product_id WHERE pc.component_id=?", (cid,))),
             "systems": db.rows(c.execute("SELECT s.id, s.name, s.category, cs.role FROM component_systems cs JOIN systems s ON s.id=cs.system_id WHERE cs.component_id=?", (cid,))),
+            "platforms": _platforms_of(c, "component", cid),
             "sboms": db.rows(c.execute("SELECT * FROM sboms WHERE component_id=? ORDER BY id DESC", (cid,))),
             "packages": db.rows(c.execute(f"""SELECT k.*,
                 (SELECT COUNT(*) FROM findings f WHERE f.package_id=k.id AND f.status IN {OPEN}) open_vulns
@@ -225,6 +260,33 @@ def system_detail(sid: int):
             "components": db.rows(c.execute("""SELECT c.id, c.name, c.version, cs.role,
                 (SELECT GROUP_CONCAT(p.name, ', ') FROM product_components pc JOIN products p ON p.id=pc.product_id WHERE pc.component_id=c.id) products
                 FROM component_systems cs JOIN components c ON c.id=cs.component_id WHERE cs.system_id=?""", (sid,))),
+            "platforms": _platforms_of(c, "system", sid),
+        }
+
+
+@app.get("/api/platform-detail/{fid}")
+def platform_detail(fid: int):
+    with db.tx() as c:
+        f = c.execute("SELECT f.*, t.name team FROM platforms f LEFT JOIN teams t ON t.id=f.owner_team_id WHERE f.id=?", (fid,)).fetchone()
+        if not f:
+            raise HTTPException(404, "Plataforma não encontrada")
+        return {
+            "platform": dict(f),
+            # produtos: vínculo direto ou via componente (via = componentes que trazem a plataforma)
+            "products": db.rows(c.execute(f"""SELECT p.id, p.name, p.version, p.update_mechanism, t.name team,
+                    (SELECT role FROM product_platforms WHERE product_id=p.id AND platform_id=:f) role,
+                    EXISTS(SELECT 1 FROM product_platforms WHERE product_id=p.id AND platform_id=:f) direct,
+                    (SELECT GROUP_CONCAT(c.name, ', ') FROM component_platforms cp JOIN components c ON c.id=cp.component_id
+                       JOIN product_components pc ON pc.component_id=c.id WHERE cp.platform_id=:f AND pc.product_id=p.id) via
+                FROM products p LEFT JOIN teams t ON t.id=p.owner_team_id
+                WHERE p.id IN ({PLATFORM_PRODUCT_IDS.format(f=":f")}) ORDER BY p.name""", {"f": fid})),
+            "components": db.rows(c.execute("""SELECT c.id, c.name, c.version, c.update_mechanism, cp.role, t.name team,
+                    (SELECT GROUP_CONCAT(p.name, ', ') FROM product_components pc JOIN products p ON p.id=pc.product_id WHERE pc.component_id=c.id) products
+                FROM component_platforms cp JOIN components c ON c.id=cp.component_id LEFT JOIN teams t ON t.id=c.owner_team_id
+                WHERE cp.platform_id=? ORDER BY c.name""", (fid,))),
+            "systems": db.rows(c.execute("""SELECT s.id, s.name, s.category, sp.role, t.name team
+                FROM system_platforms sp JOIN systems s ON s.id=sp.system_id LEFT JOIN teams t ON t.id=s.owner_team_id
+                WHERE sp.platform_id=? ORDER BY s.name""", (fid,))),
         }
 
 
@@ -238,6 +300,16 @@ def stats():
             "systems": one("SELECT COUNT(*) FROM systems"),
             "teams": one("SELECT COUNT(*) FROM teams"),
             "packages": one("SELECT COUNT(*) FROM packages"),
+            "platforms": one("SELECT COUNT(*) FROM platforms"),
+            "platforms_eol": one("SELECT COUNT(*) FROM platforms WHERE eol_date IS NOT NULL AND eol_date < date('now')"),
+            "platforms_eol_soon": one("SELECT COUNT(*) FROM platforms WHERE eol_date >= date('now') AND eol_date < date('now', '+180 days')"),
+            # plataformas vencidas ou vencendo em 1 ano, com quantos produtos dependem delas
+            "platforms_attention": db.rows(c.execute(f"""SELECT f.id, f.name, f.version, f.kind, f.eol_date, f.update_strategy,
+                  (SELECT COUNT(*) FROM products p WHERE p.id IN ({PLATFORM_PRODUCT_IDS.format(f="f.id")})) products,
+                  (SELECT COUNT(*) FROM component_platforms WHERE platform_id=f.id) components,
+                  (SELECT COUNT(*) FROM system_platforms WHERE platform_id=f.id) systems
+                FROM platforms f WHERE f.eol_date IS NOT NULL AND f.eol_date < date('now', '+365 days')
+                ORDER BY f.eol_date LIMIT 20""")),
             "components_without_sbom": one("SELECT COUNT(*) FROM components c WHERE NOT EXISTS (SELECT 1 FROM sboms s WHERE s.component_id=c.id)"),
             "without_owner": one("SELECT (SELECT COUNT(*) FROM products WHERE owner_team_id IS NULL)+(SELECT COUNT(*) FROM components WHERE owner_team_id IS NULL)"),
             "open_by_severity": _sev_counts(c, "1=1", ()),
@@ -294,10 +366,22 @@ def impact(q: str):
                    (SELECT GROUP_CONCAT(c.name, ', ') FROM component_systems cs JOIN components c ON c.id=cs.component_id WHERE cs.system_id=s.id) components
             FROM systems s LEFT JOIN teams t ON t.id=s.owner_team_id
             WHERE s.name LIKE :n OR s.vendor LIKE :n OR s.identifier LIKE :n ORDER BY s.name""", {"n": like}))
+        by_platform = db.rows(c.execute(f"""
+            SELECT f.id platform_id, f.name platform, f.version, f.kind, f.eol_date, f.update_strategy,
+                   t.name team, t.email team_email,
+                   (SELECT GROUP_CONCAT(p.name || COALESCE(' '||p.version,''), ', ') FROM products p
+                      WHERE p.id IN ({PLATFORM_PRODUCT_IDS.format(f="f.id")})) products,
+                   (SELECT GROUP_CONCAT(c.name, ', ') FROM component_platforms cp JOIN components c ON c.id=cp.component_id
+                      WHERE cp.platform_id=f.id) components,
+                   (SELECT GROUP_CONCAT(s.name, ', ') FROM system_platforms sp JOIN systems s ON s.id=sp.system_id
+                      WHERE sp.platform_id=f.id) systems
+            FROM platforms f LEFT JOIN teams t ON t.id=f.owner_team_id
+            WHERE (f.name LIKE :n OR f.vendor LIKE :n OR f.identifier LIKE :n) AND (:v = '' OR f.version LIKE :v || '%')
+            ORDER BY f.name, f.version""", {"n": like, "v": version}))
     osv = None
     if vulnlib.looks_like_vuln_id(q) and not by_vuln:
         osv = osv_check(q)
-    return {"query": q, "vulns": by_vuln, "packages": by_package, "systems": by_system, "osv": osv}
+    return {"query": q, "vulns": by_vuln, "packages": by_package, "systems": by_system, "platforms": by_platform, "osv": osv}
 
 
 def osv_check(vuln_id):
@@ -565,14 +649,19 @@ def import_inventory(data: dict = Body(...)):
             c.execute("""INSERT INTO teams (name, email, chat, manager, notes) VALUES (:name, :email, :chat, :manager, :notes)
                 ON CONFLICT(name) DO UPDATE SET email=excluded.email, chat=excluded.chat, manager=excluded.manager, notes=excluded.notes""",
                       {k: t.get(k) for k in ENTITIES["teams"]}); n += 1
+        for f in data.get("platforms", []):
+            fid = _get_or_create(c, "platforms", f["name"], f.get("version"))
+            _set(c, "platforms", fid, f); n += 1
         for s in data.get("systems", []):
             sid = _get_or_create(c, "systems", s["name"], s.get("version"))
             _set(c, "systems", sid, s); n += 1
+            _link_platforms(c, "system", sid, s)
         for comp in data.get("components", []):
             cid = _get_or_create(c, "components", comp["name"], comp.get("version"))
             _set(c, "components", cid, comp); n += 1
             for s in comp.get("systems", []):
                 c.execute("INSERT OR REPLACE INTO component_systems VALUES (?,?,?)", (cid, _by_name(c, "systems", s), _role(s)))
+            _link_platforms(c, "component", cid, comp)
         for p in data.get("products", []):
             pid = _get_or_create(c, "products", p["name"], p.get("version"))
             _set(c, "products", pid, p); n += 1
@@ -580,7 +669,21 @@ def import_inventory(data: dict = Body(...)):
                 c.execute("INSERT OR IGNORE INTO product_components VALUES (?,?)", (pid, _by_name(c, "components", comp)))
             for s in p.get("systems", []):
                 c.execute("INSERT OR REPLACE INTO product_systems VALUES (?,?,?)", (pid, _by_name(c, "systems", s), _role(s)))
+            _link_platforms(c, "product", pid, p)
     return {"imported": n}
+
+
+def _link_platforms(c, kind, ident, data):
+    """data["platforms"]: lista de nomes ("Java") ou {"name", "version", "role"}."""
+    table, col = PLATFORM_LINK[kind]
+    for ref in data.get("platforms", []):
+        name = ref["name"] if isinstance(ref, dict) else ref
+        version = ref.get("version") if isinstance(ref, dict) else None
+        r = c.execute("SELECT id FROM platforms WHERE name=? AND (? IS NULL OR version=?) ORDER BY id LIMIT 1",
+                      (name, version, version)).fetchone()
+        if not r:
+            raise ValueError(f"platforms: '{name}{' ' + version if version else ''}' não encontrada (declare-a em \"platforms\")")
+        c.execute(f"INSERT OR REPLACE INTO {table} ({col}, platform_id, role) VALUES (?,?,?)", (ident, r["id"], _role(ref)))
 
 
 def _role(ref):
@@ -607,8 +710,9 @@ def _set(c, table, ident, data):
 def export_inventory():
     with db.tx() as c:
         out = {}
-        for t in ["teams", "products", "components", "systems", "product_components", "product_systems",
-                  "component_systems", "sboms", "packages", "vulns", "findings"]:
+        for t in ["teams", "products", "components", "systems", "platforms", "product_components", "product_systems",
+                  "component_systems", "product_platforms", "component_platforms", "system_platforms",
+                  "sboms", "packages", "vulns", "findings"]:
             out[t] = db.rows(c.execute(f"SELECT * FROM {t}"))
         return JSONResponse(out, headers={"Content-Disposition": "attachment; filename=inventario-export.json"})
 

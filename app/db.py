@@ -25,6 +25,22 @@ CREATE TABLE IF NOT EXISTS products (
     UNIQUE(name, version)
 );
 
+-- Plataforma de desenvolvimento/execução: linguagem/runtime, framework, SO, RTOS/SDK,
+-- imagem base, toolchain... com fim de suporte e estratégia de atualização.
+CREATE TABLE IF NOT EXISTS platforms (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    version TEXT,
+    kind TEXT DEFAULT 'linguagem_runtime',
+    vendor TEXT,
+    eol_date TEXT,            -- fim de suporte (AAAA-MM-DD)
+    update_strategy TEXT,     -- como migrar/atualizar (texto livre)
+    identifier TEXT,          -- purl ou CPE
+    owner_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+    notes TEXT,
+    UNIQUE(name, version)
+);
+
 -- Componente: serviço, biblioteca, firmware, app, imagem de container...
 -- Um componente pode ser compartilhado por vários produtos.
 CREATE TABLE IF NOT EXISTS components (
@@ -71,6 +87,27 @@ CREATE TABLE IF NOT EXISTS component_systems (
     system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
     role TEXT,
     PRIMARY KEY (component_id, system_id)
+);
+
+CREATE TABLE IF NOT EXISTS product_platforms (
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    platform_id INTEGER NOT NULL REFERENCES platforms(id) ON DELETE CASCADE,
+    role TEXT,
+    PRIMARY KEY (product_id, platform_id)
+);
+
+CREATE TABLE IF NOT EXISTS component_platforms (
+    component_id INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+    platform_id INTEGER NOT NULL REFERENCES platforms(id) ON DELETE CASCADE,
+    role TEXT,
+    PRIMARY KEY (component_id, platform_id)
+);
+
+CREATE TABLE IF NOT EXISTS system_platforms (
+    system_id INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    platform_id INTEGER NOT NULL REFERENCES platforms(id) ON DELETE CASCADE,
+    role TEXT,
+    PRIMARY KEY (system_id, platform_id)
 );
 
 -- SBOM: sempre o mais recente por componente vale como "atual"
@@ -145,9 +182,22 @@ def tx():
         conn.close()
 
 
+# Colunas adicionadas depois da primeira versão: aplicadas em bancos existentes
+MIGRATIONS = {
+    "products": {"update_mechanism": "TEXT"},
+    "components": {"update_mechanism": "TEXT"},
+    "systems": {"update_mechanism": "TEXT"},
+}
+
+
 def init():
     with tx() as c:
         c.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
 
 def rows(cur):

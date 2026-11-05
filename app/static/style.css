@@ -39,12 +39,13 @@ tr:last-child td{border-bottom:0}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:0}dl.kv dt{color:var(--muted)}dl.kv dd{margin:0}
 /* mapa do ecossistema */
-.eco{position:relative;display:grid;grid-template-columns:minmax(150px,1fr) minmax(200px,1.4fr) minmax(170px,1.2fr) minmax(150px,1fr);gap:40px;padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+.eco{position:relative;display:grid;grid-template-columns:minmax(130px,.9fr) minmax(190px,1.3fr) minmax(160px,1.1fr) minmax(170px,1.2fr) minmax(150px,1fr);gap:32px;padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
 .eco svg{position:absolute;inset:0;pointer-events:none;width:100%;height:100%}
 .eco .col{display:flex;flex-direction:column;gap:8px;justify-content:center;position:relative;z-index:1}
 .eco .col h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 2px}
 .node{background:var(--bg);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:7px 9px}
 .node.prod{border-left-color:var(--fg);font-weight:600}.node.sys{border-left-color:var(--low)}.node.team{border-left-color:var(--med)}
+.node.plat{border-left-color:#8b5cf6}b.danger{color:var(--crit);font-size:11px}
 .node small{display:block;color:var(--muted);font-weight:400}
 dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--fg);padding:0;width:min(560px,94vw)}
 dialog::backdrop{background:#0006}
@@ -55,4 +56,4 @@ dialog::backdrop{background:#0006}
 .drop{border:2px dashed var(--line);border-radius:10px;padding:14px;text-align:center;color:var(--muted)}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;font-size:12px}
 @media (max-width:800px){body{grid-template-columns:1fr}.side{display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}.side hr{display:none}
-.top{grid-column:1;flex-wrap:wrap}.grid2{grid-template-columns:1fr}main{padding:16px}.eco{grid-template-columns:repeat(4,minmax(160px,1fr))}}
+.top{grid-column:1;flex-wrap:wrap}.grid2{grid-template-columns:1fr}main{padding:16px}.eco{grid-template-columns:repeat(5,minmax(160px,1fr))}}

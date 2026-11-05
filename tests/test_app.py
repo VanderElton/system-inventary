@@ -170,3 +170,46 @@ def test_system_findings_reach_products(client, monkeypatch):
     assert client.get("/api/e/products").json()[0]["open_vulns"] == 1
     hit = client.get("/api/impact", params={"q": "CVE-2024-23897"}).json()["vulns"][0]
     assert hit["products"] == "Prod"
+
+
+def test_platforms_seed_detail_and_impact(seeded):
+    plats = {f["name"]: f for f in seeded.get("/api/e/platforms").json()}
+    assert plats["Spring Boot"]["products"] == "Portal do Cliente 2026.10"
+    d = seeded.get(f"/api/platform-detail/{plats['Spring Boot']['id']}").json()
+    assert d["products"][0]["via"] == "api-pagamentos" and not d["products"][0]["direct"]
+    assert d["components"][0]["update_mechanism"] == "imagem_container"
+    java = seeded.get(f"/api/platform-detail/{plats['Java (OpenJDK/Temurin)']['id']}").json()
+    assert [s["name"] for s in java["systems"]] == ["Jenkins"]
+    eco = seeded.get("/api/ecosystem/product/1").json()
+    assert {f["name"] for c in eco["components"] for f in c["platforms"]} >= {"Spring Boot", "Node.js"}
+    r = seeded.get("/api/impact", params={"q": "spring boot@2.7"}).json()
+    assert r["platforms"][0]["products"] == "Portal do Cliente 2026.10"
+    st = seeded.get("/api/stats").json()
+    assert st["platforms"] == 7 and st["platforms_eol"] >= 3
+    assert {"Spring Boot", "Node.js", "FreeRTOS"} <= {f["name"] for f in st["platforms_attention"]}
+
+
+def test_platform_crud_and_links(client):
+    f = client.post("/api/e/platforms", json={"name": "Android SDK", "version": "34", "kind": "mobile",
+                                              "eol_date": "2020-01-01", "update_strategy": "targetSdk anual"}).json()["id"]
+    p = client.post("/api/e/products", json={"name": "App", "update_mechanism": "loja_apps"}).json()["id"]
+    assert client.post(f"/api/e/products/{p}/links/platforms", json={"id": f, "role": "SDK"}).status_code == 200
+    eco = client.get(f"/api/ecosystem/product/{p}").json()
+    assert eco["platforms"][0]["role"] == "SDK" and eco["product"]["update_mechanism"] == "loja_apps"
+    assert client.delete(f"/api/e/products/{p}/links/platforms/{f}").json()["ok"]
+    assert client.get(f"/api/ecosystem/product/{p}").json()["platforms"] == []
+
+
+def test_migration_adds_columns(tmp_path, monkeypatch):
+    import sqlite3
+    from app import db
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT);"
+                      "CREATE TABLE components (id INTEGER PRIMARY KEY, name TEXT);"
+                      "CREATE TABLE systems (id INTEGER PRIMARY KEY, name TEXT);")
+    con.close()
+    monkeypatch.setattr(db, "DB_PATH", str(path))
+    db.init()
+    cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(products)")}
+    assert "update_mechanism" in cols
