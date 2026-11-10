@@ -8,6 +8,8 @@ componente e cruzar com vulnerabilidades, para responder rápido à pergunta do 
 - **Stack:** Python 3.11+ · FastAPI · SQLite (um único arquivo) · interface em JavaScript puro (sem build).
 - **Dependências de runtime:** só `fastapi`, `uvicorn` e `python-multipart`.
 
+> Arquitetura, funcionamento e requisitos detalhados: [RFC-0001](docs/RFC-0001-inventario-ecossistema-psirt.md).
+
 ## Modelo de dados
 
 ```
