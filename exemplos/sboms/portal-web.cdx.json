@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4",
+  "version": 1,
+  "components": [
+    {"type": "library", "bom-ref": "pkg:npm/react@18.2.0", "name": "react", "version": "18.2.0", "purl": "pkg:npm/react@18.2.0", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "pkg:npm/lodash@4.17.20", "name": "lodash", "version": "4.17.20", "purl": "pkg:npm/lodash@4.17.20", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "pkg:npm/axios@0.21.1", "name": "axios", "version": "0.21.1", "purl": "pkg:npm/axios@0.21.1", "licenses": [{"license": {"id": "MIT"}}]},
+    {"type": "library", "bom-ref": "pkg:npm/minimist@1.2.5", "name": "minimist", "version": "1.2.5", "purl": "pkg:npm/minimist@1.2.5", "licenses": [{"license": {"id": "MIT"}}]}
+  ]
+}
